@@ -11,6 +11,9 @@ from ..entities.character import Character
 from ..core.grid import IsometricGrid, Tile
 from ..core.turn_manager import TurnManager
 from ..core.camera import Camera
+from ..core.game_mode import GameMode, TeamType, GameState, BattleObjective
+from ..ui.battle_ui import BattleUI, UIColors
+from ..ai.ai_controller import AIController
 import math
 
 class BattleScene(GameObject):
@@ -25,6 +28,8 @@ class BattleScene(GameObject):
         self.characters: List[Character] = []
         self.selected_character: Optional[Character] = None
         self.turn_manager = TurnManager()
+        self.game_mode = GameMode()
+        self.ai_controller = AIController(self)
         
         # Grid'i ekranın ortasına yerleştirmek için offset
         self.offset_x = 400 - (width * self.grid.tile_width/4)
@@ -33,11 +38,14 @@ class BattleScene(GameObject):
         # Kamera sistemi
         self.camera = Camera(800, 600)  # Ekran boyutları
         
-        # Font
-        self.font = pygame.font.SysFont('Arial', 24)
+        # UI sistemi
+        self.ui = BattleUI(800, 600)
         
         self.init_grid()
         self.init_characters()
+        
+        # Oyunu başlat
+        self.game_mode.state = GameState.PLAYING
     
     def world_to_screen(self, world_x: float, world_y: float) -> Tuple[float, float]:
         """Dünya koordinatlarını ekran koordinatlarına çevirir"""
@@ -56,11 +64,31 @@ class BattleScene(GameObject):
     
     def update(self, dt: float, events: list):
         """Sahneyi günceller"""
+        if self.game_mode.state != GameState.PLAYING:
+            return
+            
         # Kamera kontrollerini işle
         self.camera.handle_input(events)
         
+        # Mevcut karakter
+        current_char = self.turn_manager.get_current_character()
+        if not current_char:
+            return
+            
+        # Eğer AI kontrolündeki karakter ise
+        if self.game_mode.get_team(current_char) == TeamType.ENEMY:
+            # AI aksiyonlarını güncelle
+            if self.ai_controller.update(current_char):
+                # AI turu bitti
+                next_char = self.turn_manager.next_turn()
+                self.game_mode.next_turn()
+                if next_char:
+                    self.selected_character = next_char
+                    next_char.selected = True
+            return
+        
+        # Oyuncu kontrolündeki karakter için normal güncelleme
         mouse_pos = pygame.mouse.get_pos()
-        # Mouse pozisyonunu dünya koordinatlarına çevir
         world_pos = self.screen_to_world(*mouse_pos)
         grid_pos = self.grid.iso_to_cart(*world_pos)
         
@@ -70,12 +98,13 @@ class BattleScene(GameObject):
                 if event.key == pygame.K_SPACE:  # Boşluk tuşu ile turu bitir
                     if self.turn_manager.can_end_turn():
                         next_char = self.turn_manager.next_turn()
+                        self.game_mode.next_turn()
                         if next_char:
                             self.selected_character = next_char
                             next_char.selected = True
                 
                 # Yetenek tuşları (1-4)
-                if self.selected_character and self.selected_character == self.turn_manager.get_current_character():
+                if self.selected_character and self.selected_character == current_char:
                     skill_keys = [pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4]
                     for i, key in enumerate(skill_keys):
                         if event.key == key and i < len(self.selected_character.skills):
@@ -90,8 +119,6 @@ class BattleScene(GameObject):
                 clicked_tile = self.tiles[grid_pos]
                 clicked_char = self.get_character_at(*grid_pos)
                 
-                current_char = self.turn_manager.get_current_character()
-                
                 if clicked_char:
                     if self.selected_character and self.selected_character == current_char:
                         if clicked_char != current_char:
@@ -101,6 +128,9 @@ class BattleScene(GameObject):
                                 if clicked_char.hp <= 0:
                                     # Karakter öldü
                                     self.remove_character(clicked_char)
+                                    # Oyun durumunu kontrol et
+                                    if game_state := self.game_mode.check_game_over():
+                                        self.game_mode.state = game_state
                     elif clicked_char == current_char:
                         # Karakter seçimi (sadece sırası gelen karakter seçilebilir)
                         if self.selected_character:
@@ -119,6 +149,9 @@ class BattleScene(GameObject):
     
     def render(self, surface: pygame.Surface):
         """Sahneyi render eder"""
+        # Arka plan
+        surface.fill(UIColors.BACKGROUND)
+        
         # Tüm karoları çiz
         for tile in self.tiles.values():
             screen_x, screen_y = tile.get_screen_pos()
@@ -133,7 +166,7 @@ class BattleScene(GameObject):
             ]
             
             pygame.draw.polygon(surface, tile.color, points)
-            pygame.draw.polygon(surface, (0, 0, 0), points, 1)
+            pygame.draw.polygon(surface, UIColors.TEXT_DARK, points, 1)
             
         # Seçili karakterin hareket alanını vurgula
         current_char = self.turn_manager.get_current_character()
@@ -157,11 +190,12 @@ class BattleScene(GameObject):
             direction_rad = math.radians(character.direction)
             end_x = screen_x + size * math.cos(direction_rad)
             end_y = screen_y + size * math.sin(direction_rad)
-            pygame.draw.line(surface, (0, 0, 0), (screen_x, screen_y), (end_x, end_y), max(1, int(3 * self.camera.zoom)))
+            pygame.draw.line(surface, UIColors.TEXT_DARK, (screen_x, screen_y), (end_x, end_y), 
+                           max(1, int(3 * self.camera.zoom)))
             
             # Seçili durumu
             if character.selected:
-                pygame.draw.circle(surface, (255, 255, 0), (int(screen_x), int(screen_y)), 
+                pygame.draw.circle(surface, UIColors.SELECTED, (int(screen_x), int(screen_y)), 
                                  int(size + 4 * self.camera.zoom), max(1, int(2 * self.camera.zoom)))
                 
             # HP göstergesi
@@ -171,66 +205,28 @@ class BattleScene(GameObject):
             hp_y = screen_y - size - 10 * self.camera.zoom
             
             # HP arkaplan
-            pygame.draw.rect(surface, (255, 0, 0), 
+            pygame.draw.rect(surface, UIColors.DANGER, 
                             (hp_x, hp_y, hp_width, hp_height))
             
             # Mevcut HP
             current_width = (character.hp / character.max_hp) * hp_width
-            pygame.draw.rect(surface, (0, 255, 0), 
+            pygame.draw.rect(surface, UIColors.SUCCESS, 
                             (hp_x, hp_y, current_width, hp_height))
             
             # Karakter ismi
             name_surface = pygame.font.SysFont('Arial', int(24 * self.camera.zoom)).render(
-                character.name, True, (255, 255, 255))
+                character.name, True, UIColors.TEXT)
             name_rect = name_surface.get_rect(centerx=screen_x, bottom=screen_y - size - 15 * self.camera.zoom)
             surface.blit(name_surface, name_rect)
-            
-        # Sıradaki karakteri göster (UI elemanları zoom etkilenmez)
-        if current_char:
-            text = f"Sıra: {current_char.name}"
-            if self.turn_manager.can_end_turn():
-                text += " (Turu bitirmek için SPACE)"
-            text_surface = self.font.render(text, True, (255, 255, 255))
-            surface.blit(text_surface, (10, 10))
-            
-            # Seçili karakter bilgileri
-            if self.selected_character:
-                y_offset = 40
-                # Temel özellikler
-                stats_text = f"HP: {self.selected_character.hp}/{self.selected_character.max_hp} | " \
-                           f"Saldırı: {self.selected_character.attack_power} | " \
-                           f"Savunma: {self.selected_character.defense} | " \
-                           f"Hareket: {self.selected_character.movement} | " \
-                           f"Menzil: {self.selected_character.attack_range}"
-                stats_surface = self.font.render(stats_text, True, (255, 255, 255))
-                surface.blit(stats_surface, (10, y_offset))
-                
-                # Yetenekler
-                y_offset += 30
-                skill_text = "Yetenekler (1-4):"
-                skill_surface = self.font.render(skill_text, True, (255, 255, 255))
-                surface.blit(skill_surface, (10, y_offset))
-                
-                for i, skill in enumerate(self.selected_character.skills):
-                    y_offset += 25
-                    cooldown_text = f" (Bekleme: {skill.current_cooldown})" if skill.current_cooldown > 0 else ""
-                    skill_text = f"{i+1}. {skill.name}: {skill.description}{cooldown_text}"
-                    skill_surface = self.font.render(skill_text, True, 
-                                                   (150, 150, 150) if skill.current_cooldown > 0 else (255, 255, 255))
-                    surface.blit(skill_surface, (10, y_offset))
-                
-                # Aktif etkiler
-                if self.selected_character.buffs:
-                    y_offset += 35
-                    buff_text = "Aktif Etkiler:"
-                    buff_surface = self.font.render(buff_text, True, (255, 255, 255))
-                    surface.blit(buff_surface, (10, y_offset))
-                    
-                    for buff_name, turns_left in self.selected_character.buffs.items():
-                        y_offset += 25
-                        buff_text = f"{buff_name}: {turns_left} tur"
-                        buff_surface = self.font.render(buff_text, True, (200, 200, 200))
-                        surface.blit(buff_surface, (10, y_offset))
+        
+        # UI'ı render et
+        self.ui.render(surface, self.selected_character, self.game_mode.objectives, self.game_mode.current_turn)
+        
+        # Oyun sonu mesajı
+        if self.game_mode.state == GameState.VICTORY:
+            self.render_game_over(surface, "Zafer! Tüm hedefler:", self.game_mode.objectives)
+        elif self.game_mode.state == GameState.DEFEAT:
+            self.render_game_over(surface, "Yenilgi!", [])
     
     def render_movement_range(self, surface: pygame.Surface):
         """Seçili karakterin hareket menzilini gösterir"""
@@ -257,7 +253,10 @@ class BattleScene(GameObject):
                             (screen_x, screen_y - self.grid.tile_height/2 * self.camera.zoom),
                             (screen_x - self.grid.tile_width/2 * self.camera.zoom, screen_y)
                         ]
-                        pygame.draw.polygon(surface, (100, 200, 255, 128), points, max(1, int(2 * self.camera.zoom)))
+                        # Yarı saydam mavi
+                        move_color = (*UIColors.PRIMARY, 128)
+                        pygame.draw.polygon(surface, move_color, points)
+                        pygame.draw.polygon(surface, UIColors.PRIMARY, points, 2)
     
     def render_attack_range(self, surface: pygame.Surface):
         """Seçili karakterin saldırı menzilini gösterir"""
@@ -284,7 +283,10 @@ class BattleScene(GameObject):
                             (screen_x, screen_y - self.grid.tile_height/2 * self.camera.zoom),
                             (screen_x - self.grid.tile_width/2 * self.camera.zoom, screen_y)
                         ]
-                        pygame.draw.polygon(surface, (255, 100, 100, 128), points, max(1, int(2 * self.camera.zoom)))
+                        # Yarı saydam kırmızı
+                        attack_color = (*UIColors.DANGER, 128)
+                        pygame.draw.polygon(surface, attack_color, points)
+                        pygame.draw.polygon(surface, UIColors.DANGER, points, 2)
     
     def init_grid(self):
         """Grid'i başlangıç durumuna getirir"""
@@ -299,29 +301,30 @@ class BattleScene(GameObject):
         # Oyuncu karakterleri
         warrior = Character("Savaşçı", 1, 1, self.grid, self, Warrior())
         warrior.color = (50, 150, 250)  # Mavi
-        self.add_character(warrior)
+        self.add_character(warrior, TeamType.PLAYER)
         
         archer = Character("Okçu", 1, 2, self.grid, self, Archer())
         archer.color = (50, 200, 50)  # Yeşil
-        self.add_character(archer)
+        self.add_character(archer, TeamType.PLAYER)
         
         healer = Character("İyileştirici", 2, 1, self.grid, self, Healer())
         healer.color = (200, 200, 50)  # Sarı
-        self.add_character(healer)
+        self.add_character(healer, TeamType.PLAYER)
         
         # Düşman karakterleri
         enemy_mage = Character("Kara Büyücü", 8, 8, self.grid, self, Mage())
         enemy_mage.color = (250, 50, 50)  # Kırmızı
-        self.add_character(enemy_mage)
+        self.add_character(enemy_mage, TeamType.ENEMY)
         
         enemy_warrior = Character("Karanlık Şövalye", 8, 7, self.grid, self, Warrior())
         enemy_warrior.color = (200, 50, 200)  # Mor
-        self.add_character(enemy_warrior)
+        self.add_character(enemy_warrior, TeamType.ENEMY)
     
-    def add_character(self, character: Character):
+    def add_character(self, character: Character, team: TeamType):
         """Sahneye karakter ekler"""
         self.characters.append(character)
         self.turn_manager.add_character(character)
+        self.game_mode.add_character(character, team)
         tile = self.tiles.get((character.grid_x, character.grid_y))
         if tile:
             tile.occupied = True
@@ -338,8 +341,66 @@ class BattleScene(GameObject):
         if character in self.characters:
             self.characters.remove(character)
             self.turn_manager.remove_character(character)
+            self.game_mode.remove_character(character)
             tile = self.tiles.get((character.grid_x, character.grid_y))
             if tile:
                 tile.occupied = False
             if character == self.selected_character:
-                self.selected_character = None 
+                self.selected_character = None
+    
+    def render_game_over(self, surface: pygame.Surface, title: str, objectives: List[BattleObjective]):
+        """Oyun sonu ekranını render eder"""
+        # Yarı saydam siyah arka plan
+        overlay = pygame.Surface(surface.get_size())
+        overlay.fill(UIColors.BACKGROUND)
+        overlay.set_alpha(192)
+        surface.blit(overlay, (0, 0))
+        
+        # Panel
+        panel_width = 400
+        panel_height = 300
+        panel_x = surface.get_width()//2 - panel_width//2
+        panel_y = surface.get_height()//2 - panel_height//2
+        
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        pygame.draw.rect(surface, UIColors.PANEL, panel_rect, border_radius=8)
+        pygame.draw.rect(surface, UIColors.TEXT_DARK, panel_rect, width=2, border_radius=8)
+        
+        # Başlık
+        title_font = pygame.font.SysFont('Arial', 36, bold=True)
+        title_surface = title_font.render(title, True, UIColors.TEXT)
+        title_rect = title_surface.get_rect(centerx=panel_x + panel_width//2, top=panel_y + 20)
+        surface.blit(title_surface, title_rect)
+        
+        # Hedefler
+        y_offset = panel_y + 80
+        font = pygame.font.SysFont('Arial', 24)
+        
+        for objective in objectives:
+            # Hedef kutusu
+            obj_rect = pygame.Rect(panel_x + 20, y_offset, panel_width - 40, 40)
+            pygame.draw.rect(surface, UIColors.BACKGROUND, obj_rect, border_radius=4)
+            
+            # Tamamlanma durumu
+            check = "[+]" if objective.completed else "[ ]"
+            check_color = UIColors.SUCCESS if objective.completed else UIColors.DANGER
+            check_surface = font.render(check, True, check_color)
+            surface.blit(check_surface, (panel_x + 30, y_offset + 10))
+            
+            # Hedef açıklaması
+            desc_surface = font.render(objective.description, True, UIColors.TEXT)
+            surface.blit(desc_surface, (panel_x + 70, y_offset + 10))
+            
+            y_offset += 50
+        
+        # Devam etmek için mesaj
+        if self.game_mode.state == GameState.VICTORY:
+            continue_text = "Tebrikler! Oyunu kazandınız."
+            continue_color = UIColors.SUCCESS
+        else:
+            continue_text = "Oyun bitti. Tekrar deneyin."
+            continue_color = UIColors.DANGER
+            
+        continue_surface = font.render(continue_text, True, continue_color)
+        continue_rect = continue_surface.get_rect(centerx=panel_x + panel_width//2, bottom=panel_y + panel_height - 20)
+        surface.blit(continue_surface, continue_rect) 
