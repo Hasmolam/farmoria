@@ -1,141 +1,126 @@
 import pygame
+from typing import Dict, Optional, Tuple
 import math
-from typing import Dict, Tuple
-from .core import GameObject, GameSystem
-from .sprite_generator import SpriteGenerator
+from ..core.base import GameObject, GameSystem
+from ..systems.physics import PhysicsSystem
+from ..systems.input import InputSystem
+from ..graphics.animation import AnimationManager
+from ..utils.debug import DebugSystem
 
 class Player(GameObject):
-    def __init__(self, x: float, y: float):
-        super().__init__()
-        self.x = x
-        self.y = y
-        self.speed = 0.1
-        self.z_index = 1000  # Her zaman karoların üstünde çizilsin
-        
-        # Sprite özellikleri
-        self.sprite_width = 64
-        self.sprite_height = 96
-        self.base_color = (50, 120, 190)
-        self.detail_color = (255, 255, 255)
-        
-        # Sprite'ları oluştur
-        self.sprites = SpriteGenerator.create_directional_sprites(
-            self.sprite_width,
-            self.sprite_height,
-            self.base_color,
-            self.detail_color
-        )
-        self.current_direction = 'down'
-        
-        # Animasyon özellikleri
-        self.animation_time = 0
+    """Oyuncu sınıfı"""
+    def __init__(self, x: float = 0, y: float = 0):
+        super().__init__(x, y)
+        self.width = 32
+        self.height = 48
+        self.speed = 200
+        self.velocity_x = 0
+        self.velocity_y = 0
+        self.animation_manager = AnimationManager()
+        self.debug_manager = DebugSystem()
+        self.direction = "down"
         self.is_moving = False
-        self.bob_height = 4
-        self.bob_speed = 8
-        self.sway_amount = 2
         
-    def move(self, dx: float, dy: float) -> None:
-        self.is_moving = dx != 0 or dy != 0
+    def update(self, dt: float):
+        """Oyuncuyu günceller"""
+        # Pozisyonu güncelle
+        self.x += self.velocity_x * dt
+        self.y += self.velocity_y * dt
         
-        self.x += dx * self.speed
-        self.y += dy * self.speed
+        # Animasyonları güncelle
+        self.animation_manager.update(dt)
         
+        # Debug bilgilerini güncelle
+        self.debug_manager.log(f"Player position: ({self.x}, {self.y})")
+        self.debug_manager.log(f"Player velocity: ({self.velocity_x}, {self.velocity_y})")
+        self.debug_manager.log(f"Player direction: {self.direction}")
+        
+    def draw(self, surface: pygame.Surface):
+        """Oyuncuyu çizer"""
+        current_frame = self.animation_manager.get_current_frame()
+        if current_frame:
+            surface.blit(current_frame, (self.x, self.y))
+            
+    def move(self, dx: float, dy: float):
+        """Oyuncuyu hareket ettirir"""
+        self.velocity_x = dx * self.speed
+        self.velocity_y = dy * self.speed
+        
+        # Yönü güncelle
         if abs(dx) > abs(dy):
             if dx > 0:
-                self.current_direction = 'right'
-            elif dx < 0:
-                self.current_direction = 'left'
+                self.direction = "right"
+            else:
+                self.direction = "left"
         else:
             if dy > 0:
-                self.current_direction = 'down'
-            elif dy < 0:
-                self.current_direction = 'up'
+                self.direction = "down"
+            else:
+                self.direction = "up"
                 
-    def update(self, dt: float) -> None:
+        # Hareket durumunu güncelle
+        self.is_moving = dx != 0 or dy != 0
+        
+        # Uygun animasyonu oynat
         if self.is_moving:
-            self.animation_time += dt
+            self.animation_manager.play(f"walk_{self.direction}")
         else:
-            self.animation_time = 0
+            self.animation_manager.play(f"idle_{self.direction}")
             
-    def get_animation_offset(self) -> Tuple[float, float]:
-        if not self.is_moving:
-            return 0, 0
+    def stop(self):
+        """Oyuncuyu durdurur"""
+        self.velocity_x = 0
+        self.velocity_y = 0
+        self.is_moving = False
+        self.animation_manager.play(f"idle_{self.direction}")
+        
+    def get_position(self) -> Tuple[float, float]:
+        """Oyuncunun pozisyonunu döndürür"""
+        return self.x, self.y
+        
+    def get_velocity(self) -> Tuple[float, float]:
+        """Oyuncunun hızını döndürür"""
+        return self.velocity_x, self.velocity_y
+        
+    def get_direction(self) -> str:
+        """Oyuncunun yönünü döndürür"""
+        return self.direction
+        
+    def is_moving(self) -> bool:
+        """Oyuncunun hareket edip etmediğini döndürür"""
+        return self.is_moving
+        
+    def get_bounds(self) -> Tuple[float, float, float, float]:
+        """Oyuncunun sınırlarını döndürür"""
+        return self.x, self.y, self.width, self.height
+        
+    def collides_with(self, other: GameObject) -> bool:
+        """Diğer nesne ile çarpışma kontrolü yapar"""
+        x1, y1, w1, h1 = self.get_bounds()
+        x2, y2, w2, h2 = other.get_bounds()
+        
+        return (x1 < x2 + w2 and
+                x1 + w1 > x2 and
+                y1 < y2 + h2 and
+                y1 + h1 > y2)
+                
+    def handle_collision(self, other: GameObject):
+        """Çarpışma durumunda yapılacak işlemleri gerçekleştirir"""
+        # Çarpışma yönüne göre pozisyonu düzelt
+        x1, y1, w1, h1 = self.get_bounds()
+        x2, y2, w2, h2 = other.get_bounds()
+        
+        # Yatay çarpışma
+        if self.velocity_x > 0:
+            self.x = x2 - w1
+        elif self.velocity_x < 0:
+            self.x = x2 + w2
             
-        bob_offset = math.sin(self.animation_time * self.bob_speed) * self.bob_height
-        sway_offset = math.cos(self.animation_time * self.bob_speed) * self.sway_amount
-        
-        return sway_offset, bob_offset
-        
-    def draw(self, screen: pygame.Surface) -> None:
-        # İzometrik koordinatları hesapla (harita sisteminden alınacak)
-        iso_map = self.engine.get_system("isometric_map")
-        if not iso_map:
-            return
+        # Dikey çarpışma
+        if self.velocity_y > 0:
+            self.y = y2 - h1
+        elif self.velocity_y < 0:
+            self.y = y2 + h2
             
-        iso_x, iso_y = iso_map.cart_to_iso(self.x, self.y)
-        
-        # Ekran merkezleme
-        screen_center_x = screen.get_width() // 2
-        screen_center_y = screen.get_height() // 4
-        
-        # Animasyon offsetlerini al
-        sway_offset, bob_offset = self.get_animation_offset()
-        
-        # Sprite'ı çiz
-        sprite = self.sprites[self.current_direction]
-        sprite_rect = sprite.get_rect()
-        sprite_rect.centerx = int(screen_center_x + iso_x + sway_offset)
-        sprite_rect.bottom = int(screen_center_y + iso_y - bob_offset)
-        
-        screen.blit(sprite, sprite_rect)
-        
-    def serialize(self) -> Dict:
-        data = super().serialize()
-        data.update({
-            'x': self.x,
-            'y': self.y,
-            'current_direction': self.current_direction
-        })
-        return data
-        
-    def deserialize(self, data: Dict) -> None:
-        super().deserialize(data)
-        self.x = data.get('x', 0)
-        self.y = data.get('y', 0)
-        self.current_direction = data.get('current_direction', 'down')
-
-class PlayerController(GameSystem):
-    def __init__(self, player: Player):
-        super().__init__("player_controller")
-        self.player = player
-        
-    def update(self, dt: float) -> None:
-        keys = pygame.key.get_pressed()
-        dx = dy = 0
-        
-        if keys[pygame.K_w]:
-            dy -= 1
-        if keys[pygame.K_s]:
-            dy += 1
-        if keys[pygame.K_a]:
-            dx -= 1
-        if keys[pygame.K_d]:
-            dx += 1
-            
-        if dx != 0 and dy != 0:
-            dx *= 0.707
-            dy *= 0.707
-            
-        self.player.move(dx, dy)
-        
-        # Harita sınırlarını kontrol et
-        iso_map = self.engine.get_system("isometric_map")
-        if iso_map:
-            self.player.x = max(0, min(self.player.x, iso_map.width - 1))
-            self.player.y = max(0, min(self.player.y, iso_map.height - 1))
-            
-    def serialize(self) -> Dict:
-        return {}  # Kontrolcünün kaydetmesi gereken bir durum yok
-        
-    def deserialize(self, data: Dict) -> None:
-        pass  # Kontrolcünün yüklemesi gereken bir durum yok 
+        # Hızı sıfırla
+        self.stop() 

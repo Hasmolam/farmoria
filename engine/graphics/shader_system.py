@@ -12,6 +12,7 @@ class ShaderProgram:
     program: moderngl.Program
     vertex_shader: str
     fragment_shader: str
+    name: str
     uniforms: Dict[str, any] = None
 
     def __post_init__(self):
@@ -58,9 +59,9 @@ class ShaderSystem:
         self.load_default_shaders()
         
         debug_manager.log(
+            "Shader System başlatıldı",
             DebugCategory.SHADER,
             DebugLevel.INFO,
-            "Shader System başlatıldı",
             {"width": width, "height": height}
         )
     
@@ -101,21 +102,21 @@ class ShaderSystem:
                 vertex_shader=vertex_shader,
                 fragment_shader=fragment_shader
             )
-            shader_program = ShaderProgram(program, vertex_shader, fragment_shader)
+            shader_program = ShaderProgram(program, vertex_shader, fragment_shader, name)
             self.shader_programs[name] = shader_program
             
             debug_manager.log(
+                f"Shader programı oluşturuldu: {name}",
                 DebugCategory.SHADER,
-                DebugLevel.INFO,
-                f"Shader programı oluşturuldu: {name}"
+                DebugLevel.INFO
             )
             
             return shader_program
         except Exception as e:
             debug_manager.log(
+                f"Shader derleme hatası: {name}",
                 DebugCategory.SHADER,
                 DebugLevel.ERROR,
-                f"Shader derleme hatası: {name}",
                 {"error": str(e)}
             )
             raise
@@ -129,17 +130,18 @@ class ShaderSystem:
     
     def set_uniform(self, name: str, value: any):
         """Shader uniform değişkenini ayarla"""
-        if self.current_program and name in self.current_program.program:
+        if self.current_program:
             self.current_program.uniforms[name] = value
-            uniform = self.current_program.program[name]
-            
-            # Uniform tipine göre değeri ayarla
-            if isinstance(value, (int, float)):
-                uniform.value = value
-            elif isinstance(value, (tuple, list)) and len(value) in [2, 3, 4]:
-                uniform.value = tuple(value)
-            elif isinstance(value, moderngl.Texture):
-                uniform.value = value
+            if name in self.current_program.program:
+                uniform = self.current_program.program[name]
+                
+                # Uniform tipine göre değeri ayarla
+                if isinstance(value, (int, float)):
+                    uniform.value = value
+                elif isinstance(value, (tuple, list)) and len(value) in [2, 3, 4]:
+                    uniform.value = tuple(value)
+                elif isinstance(value, moderngl.Texture):
+                    uniform.value = value
     
     def render_to_texture(self, surface: pygame.Surface) -> pygame.Surface:
         """Pygame surface'ini shader ile işle ve yeni surface döndür"""
@@ -163,9 +165,9 @@ class ShaderSystem:
             
             if self.current_program:
                 debug_manager.log(
+                    f"Shader uygulanıyor: {self.current_program.name}",
                     DebugCategory.SHADER,
                     DebugLevel.DEBUG,
-                    f"Shader uygulanıyor: {self.current_program.name}",
                     {"uniforms": list(self.current_program.uniforms.keys())}
                 )
                 
@@ -190,9 +192,9 @@ class ShaderSystem:
             return output_surface
         except Exception as e:
             debug_manager.log(
+                "Render hatası",
                 DebugCategory.SHADER,
                 DebugLevel.ERROR,
-                "Render hatası",
                 {"error": str(e)}
             )
             raise
@@ -242,9 +244,9 @@ class ShaderSystem:
     def cleanup(self):
         """Shader sistemini temizle"""
         debug_manager.log(
+            "Shader System kaynakları temizleniyor",
             DebugCategory.SHADER,
-            DebugLevel.INFO,
-            "Shader System kaynakları temizleniyor"
+            DebugLevel.INFO
         )
         
         self.quad_buffer.release()

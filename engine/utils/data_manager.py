@@ -3,6 +3,7 @@ import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 import logging
+import os
 
 class DataManager:
     def __init__(self, cache_enabled: bool = True):
@@ -110,3 +111,16 @@ class DataManager:
         except Exception as e:
             self.logger.error(f"Şema doğrulama hatası: {e}")
             return False 
+
+    def load_json(self, file_path):
+        """JSON dosyasını yükler"""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Dosya bulunamadı: {file_path}")
+            
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+            
+    def save_json(self, file_path, data):
+        """JSON dosyasına kaydeder"""
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4) 

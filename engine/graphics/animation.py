@@ -1,493 +1,405 @@
 import pygame
-import numpy as np
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
-import math
 import json
-from .debug import debug_manager, DebugCategory, DebugLevel
+import math
+from dataclasses import dataclass
+from ..core.base import GameObject
+from . import DebugCategory, DebugLevel, debug_manager
 
 @dataclass
 class Bone:
-    """Kemik sınıfı"""
+    """İskelet animasyonu için kemik sınıfı"""
     name: str
-    parent: Optional['Bone']
-    length: float
-    angle: float  # Radyan cinsinden
-    scale: Tuple[float, float] = (1.0, 1.0)
-    position: Tuple[float, float] = (0.0, 0.0)
-    children: List['Bone'] = None
-    sprite: Optional[pygame.Surface] = None
-    sprite_offset: Tuple[float, float] = (0.0, 0.0)
-    flip_x: bool = False
-    flip_y: bool = False
+    parent: Optional[str]
+    x: float
+    y: float
+    rotation: float
+    scale_x: float = 1.0
+    scale_y: float = 1.0
     
-    def __post_init__(self):
-        if self.children is None:
-            self.children = []
-        if self.parent:
-            self.parent.add_child(self)
-    
-    def add_child(self, bone: 'Bone'):
-        """Alt kemik ekle"""
-        self.children.append(bone)
-    
-    def get_world_matrix(self) -> np.ndarray:
-        """Dünya dönüşüm matrisini hesapla"""
-        # Temel dönüşüm matrisi
-        cos_a = math.cos(self.angle)
-        sin_a = math.sin(self.angle)
+    def to_dict(self) -> dict:
+        """Kemiği sözlüğe dönüştürür"""
+        return {
+            'name': self.name,
+            'parent': self.parent,
+            'x': self.x,
+            'y': self.y,
+            'rotation': self.rotation,
+            'scale_x': self.scale_x,
+            'scale_y': self.scale_y
+        }
         
-        # Ölçekleme matrisi
-        scale_matrix = np.array([
-            [self.scale[0], 0, 0],
-            [0, self.scale[1], 0],
-            [0, 0, 1]
-        ])
-        
-        # Rotasyon matrisi
-        rotation_matrix = np.array([
-            [cos_a, -sin_a, 0],
-            [sin_a, cos_a, 0],
-            [0, 0, 1]
-        ])
-        
-        # Öteleme matrisi
-        translation_matrix = np.array([
-            [1, 0, self.position[0]],
-            [0, 1, self.position[1]],
-            [0, 0, 1]
-        ])
-        
-        # Matrisleri birleştir
-        local_matrix = translation_matrix @ rotation_matrix @ scale_matrix
-        
-        # Üst kemiklerin matrislerini ekle
-        if self.parent:
-            return self.parent.get_world_matrix() @ local_matrix
-        return local_matrix
-    
-    def get_tip_position(self) -> Tuple[float, float]:
-        """Kemiğin uç noktasının pozisyonunu hesapla"""
-        world_matrix = self.get_world_matrix()
-        tip = np.array([self.length, 0, 1])
-        transformed_tip = world_matrix @ tip
-        return (transformed_tip[0], transformed_tip[1])
-    
-    def set_sprite(self, sprite: pygame.Surface, offset: Tuple[float, float] = (0.0, 0.0)):
-        """Kemiğe sprite ata"""
-        self.sprite = sprite
-        self.sprite_offset = offset
-    
-    def flip_sprite(self, flip_x: bool = False, flip_y: bool = False):
-        """Sprite'ı çevir"""
-        self.flip_x = flip_x
-        self.flip_y = flip_y
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Bone':
+        """Sözlükten kemik oluşturur"""
+        return cls(
+            name=data['name'],
+            parent=data['parent'],
+            x=data['x'],
+            y=data['y'],
+            rotation=data['rotation'],
+            scale_x=data.get('scale_x', 1.0),
+            scale_y=data.get('scale_y', 1.0)
+        )
 
 @dataclass
 class Keyframe:
-    """Animasyon karesi"""
-    time: float  # Saniye cinsinden
-    bone_poses: Dict[str, Tuple[float, float, float]]  # Kemik adı -> (pozisyon_x, pozisyon_y, açı)
+    """Animasyon için anahtar kare sınıfı"""
+    time: float
+    bone_name: str
+    x: float
+    y: float
+    rotation: float
+    scale_x: float = 1.0
+    scale_y: float = 1.0
+    
+    def to_dict(self) -> dict:
+        """Anahtar kareyi sözlüğe dönüştürür"""
+        return {
+            'time': self.time,
+            'bone_name': self.bone_name,
+            'x': self.x,
+            'y': self.y,
+            'rotation': self.rotation,
+            'scale_x': self.scale_x,
+            'scale_y': self.scale_y
+        }
+        
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Keyframe':
+        """Sözlükten anahtar kare oluşturur"""
+        return cls(
+            time=data['time'],
+            bone_name=data['bone_name'],
+            x=data['x'],
+            y=data['y'],
+            rotation=data['rotation'],
+            scale_x=data.get('scale_x', 1.0),
+            scale_y=data.get('scale_y', 1.0)
+        )
 
 class Animation:
-    """Kemik animasyonu"""
-    def __init__(self, name: str, duration: float):
+    """İskelet animasyonu sınıfı"""
+    def __init__(self, name: str, duration: float = 1.0, loop: bool = True):
         self.name = name
         self.duration = duration
+        self.loop = loop
         self.keyframes: List[Keyframe] = []
-        self.current_time = 0.0
-        self.is_playing = False
-        self.is_looping = True
         
-        debug_manager.log(
-            DebugCategory.ANIMATION,
-            DebugLevel.INFO,
-            f"Yeni animasyon oluşturuldu: {name}",
-            {"duration": duration}
-        )
-    
-    def add_keyframe(self, time: float, bone_poses: Dict[str, Tuple[float, float, float]]):
-        """Yeni bir animasyon karesi ekle"""
-        keyframe = Keyframe(time, bone_poses)
-        # Zamanı sırala
-        insert_index = 0
-        for i, kf in enumerate(self.keyframes):
-            if kf.time > time:
-                break
-            insert_index = i + 1
-        self.keyframes.insert(insert_index, keyframe)
-    
-    def get_pose_at_time(self, time: float) -> Dict[str, Tuple[float, float, float]]:
-        """Belirli bir zamandaki pozu hesapla"""
-        if not self.keyframes:
-            return {}
+    def add_keyframe(self, keyframe: Keyframe):
+        """Anahtar kare ekler"""
+        self.keyframes.append(keyframe)
+        self.keyframes.sort(key=lambda k: k.time)  # Zamana göre sırala
         
-        # Zaman sınırlarını kontrol et
-        if time <= self.keyframes[0].time:
-            return self.keyframes[0].bone_poses
-        if time >= self.keyframes[-1].time:
-            return self.keyframes[-1].bone_poses
+    def get_keyframes_for_bone(self, bone_name: str) -> List[Keyframe]:
+        """Belirli bir kemik için anahtar kareleri döndürür"""
+        return [k for k in self.keyframes if k.bone_name == bone_name]
         
-        # İki kare arasında interpolasyon yap
-        for i in range(len(self.keyframes) - 1):
-            frame1 = self.keyframes[i]
-            frame2 = self.keyframes[i + 1]
-            
-            if frame1.time <= time <= frame2.time:
-                # İki kare arasındaki t değerini hesapla (0-1 arası)
-                t = (time - frame1.time) / (frame2.time - frame1.time)
-                
-                # Doğrusal interpolasyon
-                result = {}
-                for bone_name in frame1.bone_poses:
-                    if bone_name in frame2.bone_poses:
-                        pos1_x, pos1_y, angle1 = frame1.bone_poses[bone_name]
-                        pos2_x, pos2_y, angle2 = frame2.bone_poses[bone_name]
-                        
-                        # Açı interpolasyonu için en kısa yolu seç
-                        angle_diff = angle2 - angle1
-                        if angle_diff > math.pi:
-                            angle_diff -= 2 * math.pi
-                        elif angle_diff < -math.pi:
-                            angle_diff += 2 * math.pi
-                        
-                        result[bone_name] = (
-                            pos1_x + (pos2_x - pos1_x) * t,
-                            pos1_y + (pos2_y - pos1_y) * t,
-                            angle1 + angle_diff * t
-                        )
-                return result
-        
-        return self.keyframes[-1].bone_poses
-    
-    def update(self, dt: float):
-        """Animasyonu güncelle"""
-        debug_manager.start_performance_metric(f"animation_update_{self.name}")
-        try:
-            if not self.is_playing:
-                return
-            
-            self.current_time += dt
-            
-            if self.current_time >= self.duration:
-                if self.is_looping:
-                    self.current_time %= self.duration
-                    debug_manager.log(
-                        DebugCategory.ANIMATION,
-                        DebugLevel.DEBUG,
-                        f"Animasyon döngüye girdi: {self.name}"
-                    )
-                else:
-                    self.current_time = self.duration
-                    self.is_playing = False
-                    debug_manager.log(
-                        DebugCategory.ANIMATION,
-                        DebugLevel.INFO,
-                        f"Animasyon tamamlandı: {self.name}"
-                    )
-        finally:
-            debug_manager.end_performance_metric(f"animation_update_{self.name}")
-    
-    def play(self, loop: bool = True):
-        """Animasyonu başlat"""
-        self.is_playing = True
-        self.is_looping = loop
-        self.current_time = 0.0
-    
-    def stop(self):
-        """Animasyonu durdur"""
-        self.is_playing = False
-        self.current_time = 0.0
-    
-    def pause(self):
-        """Animasyonu duraklat"""
-        self.is_playing = False
-    
-    def get_debug_info(self) -> dict:
-        """Debug bilgilerini döndür."""
+    def to_dict(self) -> dict:
+        """Animasyonu sözlüğe dönüştürür"""
         return {
-            "name": self.name,
-            "duration": self.duration,
-            "current_time": self.current_time,
-            "is_playing": self.is_playing,
-            "is_looping": self.is_looping,
-            "keyframe_count": len(self.keyframes)
+            'name': self.name,
+            'duration': self.duration,
+            'loop': self.loop,
+            'keyframes': [k.to_dict() for k in self.keyframes]
         }
-
-class Skeleton:
-    """İskelet sistemi"""
-    def __init__(self):
-        self.bones: Dict[str, Bone] = {}
-        self.root_bones: List[Bone] = []
-        self.animations: Dict[str, Animation] = {}
-        self.current_animation: Optional[Animation] = None
-        self.sprite_sheet: Optional[pygame.Surface] = None
-        self.sprite_regions: Dict[str, pygame.Rect] = {}
         
-        debug_manager.log(
-            DebugCategory.ANIMATION,
-            DebugLevel.INFO,
-            "Yeni iskelet oluşturuldu"
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Animation':
+        """Sözlükten animasyon oluşturur"""
+        animation = cls(
+            name=data['name'],
+            duration=data['duration'],
+            loop=data['loop']
         )
-    
-    def add_bone(self, name: str, length: float, parent_name: Optional[str] = None,
-                angle: float = 0.0, position: Tuple[float, float] = (0.0, 0.0)):
-        """Yeni bir kemik ekle"""
-        parent = self.bones.get(parent_name) if parent_name else None
-        bone = Bone(name, parent, length, angle, position=position)
-        self.bones[name] = bone
+        for keyframe_data in data['keyframes']:
+            animation.add_keyframe(Keyframe.from_dict(keyframe_data))
+        return animation
+
+class Skeleton(GameObject):
+    """İskelet sınıfı"""
+    def __init__(self, name: str = "Skeleton"):
+        super().__init__(name)
+        self.bones: Dict[str, Bone] = {}
+        self.animations: Dict[str, Animation] = {}
+        self.current_animation: Optional[str] = None
+        self.animation_time = 0.0
+        self.sprite_surface: Optional[pygame.Surface] = None
+        self.sprite_offset = (0, 0)
         
-        if not parent:
-            self.root_bones.append(bone)
-    
+    def add_bone(self, bone: Bone):
+        """Kemik ekler"""
+        self.bones[bone.name] = bone
+        
+    def get_bone(self, name: str) -> Optional[Bone]:
+        """İsme göre kemik döndürür"""
+        return self.bones.get(name)
+        
     def add_animation(self, animation: Animation):
-        """Yeni bir animasyon ekle"""
+        """Animasyon ekler"""
         self.animations[animation.name] = animation
-    
-    def play_animation(self, name: str, loop: bool = True):
-        """Animasyonu oynat"""
+        
+    def get_animation(self, name: str) -> Optional[Animation]:
+        """İsme göre animasyon döndürür"""
+        return self.animations.get(name)
+        
+    def play_animation(self, name: str):
+        """Animasyon oynatır"""
         if name in self.animations:
-            self.current_animation = self.animations[name]
-            self.current_animation.play(loop)
-    
+            self.current_animation = name
+            self.animation_time = 0.0
+            debug_manager.log(f"Playing animation: {name}", DebugCategory.GRAPHICS)
+            
+    def stop_animation(self):
+        """Animasyonu durdurur"""
+        self.current_animation = None
+        self.animation_time = 0.0
+        
+    def set_sprite(self, surface: pygame.Surface, offset: Tuple[int, int] = (0, 0)):
+        """Sprite'ı ayarlar"""
+        self.sprite_surface = surface
+        self.sprite_offset = offset
+        
     def update(self, dt: float):
-        """İskeleti güncelle"""
-        debug_manager.start_performance_metric("skeleton_update")
-        try:
-            if self.current_animation and self.current_animation.is_playing:
-                self.current_animation.update(dt)
-                
-                # Güncel pozu uygula
-                current_pose = self.current_animation.get_pose_at_time(
-                    self.current_animation.current_time
-                )
-                
-                for bone_name, (pos_x, pos_y, angle) in current_pose.items():
-                    if bone_name in self.bones:
-                        bone = self.bones[bone_name]
-                        bone.position = (pos_x, pos_y)
-                        bone.angle = angle
-                
-                debug_manager.log(
-                    DebugCategory.ANIMATION,
-                    DebugLevel.DEBUG,
-                    f"İskelet güncellendi: {self.current_animation.name}",
-                    {"time": self.current_animation.current_time}
-                )
-        except Exception as e:
-            debug_manager.log(
-                DebugCategory.ANIMATION,
-                DebugLevel.ERROR,
-                "İskelet güncelleme hatası",
-                {"error": str(e)}
-            )
-            raise
-        finally:
-            debug_manager.end_performance_metric("skeleton_update")
-    
-    def draw(self, surface: pygame.Surface, position: Tuple[float, float], 
-             debug: bool = False, color: Tuple[int, int, int] = (255, 0, 0)):
-        """İskeleti çiz"""
-        debug_manager.start_performance_metric("skeleton_draw")
-        try:
-            for bone in self.root_bones:
-                self._draw_bone_recursive(surface, bone, position, debug, color)
-                
-            if debug:
-                self.draw_debug_info(surface)
-        finally:
-            debug_manager.end_performance_metric("skeleton_draw")
-    
-    def _draw_bone_recursive(self, surface: pygame.Surface, bone: Bone,
-                           offset: Tuple[float, float], debug: bool,
-                           color: Tuple[int, int, int]):
-        """Kemiği ve alt kemiklerini çiz"""
-        start_pos = bone.position
-        tip_pos = bone.get_tip_position()
+        """İskeleti günceller"""
+        super().update(dt)
         
-        # Sprite'ı çiz
-        if bone.sprite:
-            # Sprite'ı döndür ve ölçekle
-            rotated_sprite = pygame.transform.rotate(
-                pygame.transform.flip(bone.sprite, bone.flip_x, bone.flip_y),
-                -math.degrees(bone.angle)  # Pygame açıları saat yönünün tersine
-            )
-            
-            # Sprite pozisyonunu hesapla
-            sprite_rect = rotated_sprite.get_rect()
-            sprite_x = offset[0] + start_pos[0] + bone.sprite_offset[0]
-            sprite_y = offset[1] + start_pos[1] + bone.sprite_offset[1]
-            sprite_rect.center = (sprite_x, sprite_y)
-            
-            # Sprite'ı çiz
-            surface.blit(rotated_sprite, sprite_rect)
-        
-        if debug:
-            # Debug modunda kemikleri çizgilerle göster
-            pygame.draw.line(
-                surface,
-                color,
-                (offset[0] + start_pos[0], offset[1] + start_pos[1]),
-                (offset[0] + tip_pos[0], offset[1] + tip_pos[1]),
-                2
-            )
-            
-            # Eklem noktalarını göster
-            pygame.draw.circle(
-                surface,
-                (0, 255, 0),
-                (int(offset[0] + start_pos[0]), int(offset[1] + start_pos[1])),
-                4
-            )
-        
-        # Alt kemikleri çiz
-        for child in bone.children:
-            self._draw_bone_recursive(surface, child, offset, debug, color)
-    
-    def draw_debug_info(self, surface: pygame.Surface):
-        """Debug bilgilerini çiz."""
-        if not debug_manager.enabled:
+        if not self.current_animation:
             return
             
-        font = pygame.font.Font(None, 20)
-        y = 10
+        animation = self.animations[self.current_animation]
+        self.animation_time += dt
         
-        # Animasyon bilgileri
-        if self.current_animation:
-            anim_text = f"Animasyon: {self.current_animation.name}"
-            text_surface = font.render(anim_text, True, (0, 255, 0))
-            surface.blit(text_surface, (10, y))
-            y += 20
+        # Döngü kontrolü
+        if self.animation_time > animation.duration:
+            if animation.loop:
+                self.animation_time %= animation.duration
+            else:
+                self.stop_animation()
+                return
+                
+        # Her kemik için interpolasyon yap
+        for bone_name, bone in self.bones.items():
+            keyframes = animation.get_keyframes_for_bone(bone_name)
+            if not keyframes:
+                continue
+                
+            # Önceki ve sonraki anahtar kareleri bul
+            prev_keyframe = None
+            next_keyframe = None
+            for keyframe in keyframes:
+                if keyframe.time <= self.animation_time:
+                    prev_keyframe = keyframe
+                else:
+                    next_keyframe = keyframe
+                    break
+                    
+            if prev_keyframe and next_keyframe:
+                # İki anahtar kare arasında interpolasyon yap
+                t = (self.animation_time - prev_keyframe.time) / (next_keyframe.time - prev_keyframe.time)
+                bone.x = self._lerp(prev_keyframe.x, next_keyframe.x, t)
+                bone.y = self._lerp(prev_keyframe.y, next_keyframe.y, t)
+                bone.rotation = self._lerp_angle(prev_keyframe.rotation, next_keyframe.rotation, t)
+                bone.scale_x = self._lerp(prev_keyframe.scale_x, next_keyframe.scale_x, t)
+                bone.scale_y = self._lerp(prev_keyframe.scale_y, next_keyframe.scale_y, t)
+            elif prev_keyframe:
+                # Son anahtar kareyi kullan
+                bone.x = prev_keyframe.x
+                bone.y = prev_keyframe.y
+                bone.rotation = prev_keyframe.rotation
+                bone.scale_x = prev_keyframe.scale_x
+                bone.scale_y = prev_keyframe.scale_y
+                
+    def draw(self, surface: pygame.Surface):
+        """İskeleti çizer"""
+        if not self.enabled or not self.sprite_surface:
+            return
             
-            time_text = f"Zaman: {self.current_animation.current_time:.2f}s"
-            text_surface = font.render(time_text, True, (0, 255, 0))
-            surface.blit(text_surface, (10, y))
-            y += 20
-        
-        # Kemik bilgileri
-        bone_count = len(self.bones)
-        bones_text = f"Kemik sayısı: {bone_count}"
-        text_surface = font.render(bones_text, True, (0, 255, 0))
-        surface.blit(text_surface, (10, y))
-    
-    def save_to_file(self, filename: str):
-        """İskelet ve animasyonları dosyaya kaydet"""
+        # Her kemiği çiz
+        for bone_name, bone in self.bones.items():
+            # Kemik transformasyonunu hesapla
+            transform = pygame.Surface(self.sprite_surface.get_size(), pygame.SRCALPHA)
+            
+            # Sprite'ı kopyala
+            transform.blit(self.sprite_surface, (0, 0))
+            
+            # Dönüşümleri uygula
+            rotated = pygame.transform.rotate(transform, -bone.rotation)
+            scaled = pygame.transform.scale(rotated,
+                (int(rotated.get_width() * bone.scale_x),
+                 int(rotated.get_height() * bone.scale_y)))
+            
+            # Pozisyonu hesapla
+            x = bone.x - scaled.get_width() / 2 + self.sprite_offset[0]
+            y = bone.y - scaled.get_height() / 2 + self.sprite_offset[1]
+            
+            # Çiz
+            surface.blit(scaled, (x, y))
+            
+    def save(self, file_path: str):
+        """İskeleti dosyaya kaydeder"""
         data = {
-            'bones': {},
-            'animations': {},
-            'sprite_regions': {}
+            'bones': {name: bone.to_dict() for name, bone in self.bones.items()},
+            'animations': {name: anim.to_dict() for name, anim in self.animations.items()}
         }
-        
-        # Kemik verilerini kaydet
-        for name, bone in self.bones.items():
-            data['bones'][name] = {
-                'length': bone.length,
-                'parent': bone.parent.name if bone.parent else None,
-                'angle': bone.angle,
-                'position': bone.position,
-                'scale': bone.scale,
-                'sprite_offset': bone.sprite_offset,
-                'flip_x': bone.flip_x,
-                'flip_y': bone.flip_y
-            }
-        
-        # Animasyon verilerini kaydet
-        for name, animation in self.animations.items():
-            data['animations'][name] = {
-                'duration': animation.duration,
-                'keyframes': [
-                    {
-                        'time': kf.time,
-                        'bone_poses': kf.bone_poses
-                    }
-                    for kf in animation.keyframes
-                ]
-            }
-        
-        # Sprite bölgelerini kaydet
-        if self.sprite_regions:
-            data['sprite_regions'] = {
-                name: (rect.x, rect.y, rect.width, rect.height)
-                for name, rect in self.sprite_regions.items()
-            }
-        
-        with open(filename, 'w') as f:
+        with open(file_path, 'w') as f:
             json.dump(data, f, indent=2)
-    
+            
     @classmethod
-    def load_from_file(cls, filename: str, sprite_sheet: Optional[pygame.Surface] = None) -> 'Skeleton':
-        """İskelet ve animasyonları dosyadan yükle"""
-        with open(filename, 'r') as f:
+    def load(cls, file_path: str) -> 'Skeleton':
+        """Dosyadan iskelet yükler"""
+        with open(file_path, 'r') as f:
             data = json.load(f)
-        
+            
         skeleton = cls()
         
-        # Sprite sheet'i yükle
-        if sprite_sheet and 'sprite_regions' in data:
-            skeleton.load_sprite_sheet(sprite_sheet, {
-                name: tuple(rect)
-                for name, rect in data['sprite_regions'].items()
-            })
-        
-        # Önce köksüz kemikleri yükle
-        for name, bone_data in data['bones'].items():
-            if not bone_data['parent']:
-                skeleton.add_bone(
-                    name,
-                    bone_data['length'],
-                    angle=bone_data['angle'],
-                    position=tuple(bone_data['position'])
-                )
-                # Sprite özelliklerini ayarla
-                bone = skeleton.bones[name]
-                bone.sprite_offset = tuple(bone_data.get('sprite_offset', (0.0, 0.0)))
-                bone.flip_x = bone_data.get('flip_x', False)
-                bone.flip_y = bone_data.get('flip_y', False)
-        
-        # Sonra alt kemikleri yükle
-        for name, bone_data in data['bones'].items():
-            if bone_data['parent']:
-                skeleton.add_bone(
-                    name,
-                    bone_data['length'],
-                    parent_name=bone_data['parent'],
-                    angle=bone_data['angle'],
-                    position=tuple(bone_data['position'])
-                )
-                # Sprite özelliklerini ayarla
-                bone = skeleton.bones[name]
-                bone.sprite_offset = tuple(bone_data.get('sprite_offset', (0.0, 0.0)))
-                bone.flip_x = bone_data.get('flip_x', False)
-                bone.flip_y = bone_data.get('flip_y', False)
-        
+        # Kemikleri yükle
+        for bone_data in data['bones'].values():
+            skeleton.add_bone(Bone.from_dict(bone_data))
+            
         # Animasyonları yükle
-        for name, anim_data in data['animations'].items():
-            animation = Animation(name, anim_data['duration'])
+        for animation_data in data['animations'].values():
+            skeleton.add_animation(Animation.from_dict(animation_data))
             
-            for kf_data in anim_data['keyframes']:
-                animation.add_keyframe(
-                    kf_data['time'],
-                    {k: tuple(v) for k, v in kf_data['bone_poses'].items()}
-                )
-            
-            skeleton.add_animation(animation)
-        
         return skeleton
+        
+    def _lerp(self, a: float, b: float, t: float) -> float:
+        """Doğrusal interpolasyon"""
+        return a + (b - a) * t
+        
+    def _lerp_angle(self, a: float, b: float, t: float) -> float:
+        """Açı interpolasyonu"""
+        diff = (b - a + 180) % 360 - 180
+        return a + diff * t 
+
+class Animation:
+    """Sprite animasyonu sınıfı"""
+    def __init__(self, frames: List[pygame.Surface], frame_duration: float = 0.1, loop: bool = True):
+        self.frames = frames
+        self.frame_duration = frame_duration
+        self.loop = loop
+        self.current_frame = 0
+        self.time_elapsed = 0.0
+        self.finished = False
+        
+    def update(self, dt: float):
+        """Animasyonu günceller"""
+        if self.finished and not self.loop:
+            return
+            
+        self.time_elapsed += dt
+        if self.time_elapsed >= self.frame_duration:
+            self.time_elapsed = 0
+            self.current_frame += 1
+            if self.current_frame >= len(self.frames):
+                if self.loop:
+                    self.current_frame = 0
+                else:
+                    self.current_frame = len(self.frames) - 1
+                    self.finished = True
+                    
+    def get_current_frame(self) -> pygame.Surface:
+        """Mevcut frame'i döndürür"""
+        return self.frames[self.current_frame]
+        
+    def reset(self):
+        """Animasyonu sıfırlar"""
+        self.current_frame = 0
+        self.time_elapsed = 0.0
+        self.finished = False
+        
+    def is_finished(self) -> bool:
+        """Animasyonun bitip bitmediğini döndürür"""
+        return self.finished
+
+class AnimationManager:
+    """Animasyon yönetim sınıfı"""
+    def __init__(self):
+        self.animations: Dict[str, Animation] = {}
+        self.current_animation: Optional[str] = None
+        
+    def add_animation(self, name: str, animation: Animation):
+        """Yeni animasyon ekler"""
+        self.animations[name] = animation
+        if self.current_animation is None:
+            self.current_animation = name
+            
+    def play(self, name: str):
+        """Belirtilen animasyonu oynatır"""
+        if name in self.animations:
+            if self.current_animation != name:
+                self.animations[name].reset()
+                self.current_animation = name
+                
+    def update(self, dt: float):
+        """Mevcut animasyonu günceller"""
+        if self.current_animation:
+            self.animations[self.current_animation].update(dt)
+            
+    def get_current_frame(self) -> Optional[pygame.Surface]:
+        """Mevcut frame'i döndürür"""
+        if self.current_animation:
+            return self.animations[self.current_animation].get_current_frame()
+        return None
+        
+    def is_playing(self, name: str) -> bool:
+        """Belirtilen animasyonun oynatılıp oynatılmadığını döndürür"""
+        return self.current_animation == name
+        
+    def get_current_animation(self) -> Optional[str]:
+        """Mevcut animasyon adını döndürür"""
+        return self.current_animation
+        
+    def reset_current(self):
+        """Mevcut animasyonu sıfırlar"""
+        if self.current_animation:
+            self.animations[self.current_animation].reset()
+            
+    def clear(self):
+        """Tüm animasyonları temizler"""
+        self.animations.clear()
+        self.current_animation = None
+
+# Sprite sheet'ten animasyon oluşturma yardımcı fonksiyonları
+def load_spritesheet(filename: str, frame_width: int, frame_height: int) -> List[pygame.Surface]:
+    """Sprite sheet'i yükler ve frame'lere böler"""
+    spritesheet = pygame.image.load(filename)
+    frames = []
     
-    def load_sprite_sheet(self, sprite_sheet: pygame.Surface, regions: Dict[str, Tuple[int, int, int, int]]):
-        """Sprite sheet'i yükle ve bölgeleri tanımla"""
-        self.sprite_sheet = sprite_sheet
-        self.sprite_regions = {
-            name: pygame.Rect(*rect)
-            for name, rect in regions.items()
-        }
+    sheet_width = spritesheet.get_width()
+    sheet_height = spritesheet.get_height()
     
-    def set_bone_sprite(self, bone_name: str, sprite_name: str, 
-                       offset: Tuple[float, float] = (0.0, 0.0)):
-        """Kemiğe sprite ata"""
-        if bone_name in self.bones and sprite_name in self.sprite_regions:
-            bone = self.bones[bone_name]
-            region = self.sprite_regions[sprite_name]
-            sprite = pygame.Surface(region.size, pygame.SRCALPHA)
-            sprite.blit(self.sprite_sheet, (0, 0), region)
-            bone.set_sprite(sprite, offset) 
+    for y in range(0, sheet_height, frame_height):
+        for x in range(0, sheet_width, frame_width):
+            frame = pygame.Surface((frame_width, frame_height), pygame.SRCALPHA)
+            frame.blit(spritesheet, (0, 0), (x, y, frame_width, frame_height))
+            frames.append(frame)
+            
+    return frames
+    
+def create_animation_from_spritesheet(filename: str, frame_width: int, frame_height: int,
+                                    frame_duration: float = 0.1, loop: bool = True) -> Animation:
+    """Sprite sheet'ten animasyon oluşturur"""
+    frames = load_spritesheet(filename, frame_width, frame_height)
+    return Animation(frames, frame_duration, loop)
+    
+def load_animation_config(config_file: str) -> Dict[str, Animation]:
+    """JSON config dosyasından animasyonları yükler"""
+    animations = {}
+    
+    with open(config_file, 'r') as f:
+        config = json.load(f)
+        
+    for anim_name, anim_data in config['animations'].items():
+        spritesheet = anim_data['spritesheet']
+        frame_width = anim_data['frame_width']
+        frame_height = anim_data['frame_height']
+        frame_duration = anim_data.get('frame_duration', 0.1)
+        loop = anim_data.get('loop', True)
+        
+        animation = create_animation_from_spritesheet(
+            spritesheet, frame_width, frame_height, frame_duration, loop
+        )
+        animations[anim_name] = animation
+        
+    return animations 

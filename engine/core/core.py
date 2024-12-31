@@ -1,11 +1,11 @@
 import pygame
 import pymunk
 from typing import Optional
-from .scene import SceneManager
-from .base import GameObject, GameSystem
-from .audio import AudioSystem
-from .ui import UIManager
-from .renderer import Renderer
+from engine.core.scene import SceneManager
+from engine.core.base import GameObject, GameSystem
+from engine.systems.audio import AudioSystem
+from engine.systems.ui import UIManager
+from engine.systems.renderer import Renderer
 
 class FarmoriaEngine:
     def __init__(self, width: int, height: int, title: str):
@@ -19,7 +19,7 @@ class FarmoriaEngine:
         self.audio_system = AudioSystem()
         self.ui_manager = UIManager()
         self.ui_manager.set_engine(self)
-        self.renderer = Renderer()
+        self.renderer = Renderer(self.screen)
         
     def add_scene(self, scene):
         self.scene_manager.add_scene(scene)

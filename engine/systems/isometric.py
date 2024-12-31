@@ -52,101 +52,50 @@ class IsometricGrid:
         return round(cart_x), round(cart_y)
 
 class TileMap:
-    """İzometrik tile harita sistemi"""
-    def __init__(self, grid: IsometricGrid):
+    """İzometrik harita sınıfı"""
+    
+    def __init__(self, grid, width=10, height=10):
+        """TileMap başlatıcı"""
         self.grid = grid
-        self.layers: Dict[int, Dict[Tuple[int, int], Tile]] = {0: {}}
-        self.current_layer = 0
-    
-    def add_layer(self, layer_id: int):
-        """Yeni bir katman ekle"""
-        if layer_id not in self.layers:
-            self.layers[layer_id] = {}
-    
-    def set_tile(self, x: int, y: int, tile: Tile, layer: int = None):
-        """Belirtilen konuma tile yerleştir"""
-        if layer is None:
-            layer = self.current_layer
-        if layer not in self.layers:
-            self.add_layer(layer)
-        self.layers[layer][(x, y)] = tile
-    
-    def get_tile(self, x: int, y: int, layer: int = None) -> Optional[Tile]:
-        """Belirtilen konumdaki tile'ı getir"""
-        if layer is None:
-            layer = self.current_layer
-        return self.layers.get(layer, {}).get((x, y))
-    
-    def remove_tile(self, x: int, y: int, layer: int = None):
-        """Belirtilen konumdaki tile'ı kaldır"""
-        if layer is None:
-            layer = self.current_layer
-        if layer in self.layers and (x, y) in self.layers[layer]:
-            del self.layers[layer][(x, y)]
-    
-    def is_walkable(self, x: int, y: int) -> bool:
-        """Belirtilen konumun yürünebilir olup olmadığını kontrol et"""
-        for layer in sorted(self.layers.keys()):
-            tile = self.get_tile(x, y, layer)
-            if tile and not tile.walkable:
-                return False
-        return True
-    
-    def get_path(self, start: Tuple[int, int], end: Tuple[int, int]) -> List[Tuple[int, int]]:
-        """A* algoritması ile iki nokta arasındaki yolu bul"""
-        def heuristic(a: Tuple[int, int], b: Tuple[int, int]) -> float:
-            return math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)
+        self.width = width
+        self.height = height
+        self.tiles = [[None for _ in range(height)] for _ in range(width)]
         
-        def get_neighbors(pos: Tuple[int, int]) -> List[Tuple[int, int]]:
-            x, y = pos
-            neighbors = [
-                (x+1, y), (x-1, y), (x, y+1), (x, y-1),
-                (x+1, y+1), (x-1, y-1), (x+1, y-1), (x-1, y+1)
-            ]
-            return [n for n in neighbors if self.is_walkable(*n)]
+    def get_tile(self, x, y):
+        """Belirtilen konumdaki tile'ı döndürür"""
+        if self.is_valid_position(x, y):
+            return self.tiles[x][y]
+        return None
         
-        # A* algoritması implementasyonu
-        frontier = [(0, start)]
-        came_from = {start: None}
-        cost_so_far = {start: 0}
-        
-        while frontier:
-            current = frontier.pop(0)[1]
+    def set_tile(self, x, y, tile):
+        """Belirtilen konuma tile yerleştirir"""
+        if self.is_valid_position(x, y):
+            self.tiles[x][y] = tile
             
-            if current == end:
-                break
-                
-            for next_pos in get_neighbors(current):
-                new_cost = cost_so_far[current] + 1
-                
-                if next_pos not in cost_so_far or new_cost < cost_so_far[next_pos]:
-                    cost_so_far[next_pos] = new_cost
-                    priority = new_cost + heuristic(end, next_pos)
-                    frontier.append((priority, next_pos))
-                    frontier.sort()
-                    came_from[next_pos] = current
-        
-        # Yolu oluştur
-        path = []
-        current = end
-        while current is not None:
-            path.append(current)
-            current = came_from.get(current)
-        path.reverse()
-        
-        return path if path[0] == start else []
+    def is_valid_position(self, x, y):
+        """Koordinatların harita sınırları içinde olup olmadığını kontrol eder"""
+        return 0 <= x < self.width and 0 <= y < self.height
 
 class IsometricRenderer:
-    """İzometrik render sistemi"""
-    def __init__(self, tilemap: TileMap):
-        self.tilemap = tilemap
-        # Çift tamponlama için arka tampon oluştur
-        self.back_buffer = None
-        # Shader sistemi
-        self.shader_system = None
-        self.current_shader = None
-        self.light_positions = []
+    """İzometrik render sınıfı"""
+    
+    def __init__(self, screen, grid):
+        """IsometricRenderer başlatıcı"""
+        self.screen = screen
+        self.grid = grid
         
+    def world_to_screen(self, world_x, world_y):
+        """Dünya koordinatlarını ekran koordinatlarına çevirir"""
+        screen_x = (world_x - world_y) * self.grid.tile_width // 2
+        screen_y = (world_x + world_y) * self.grid.tile_height // 2
+        return screen_x, screen_y
+        
+    def screen_to_world(self, screen_x, screen_y):
+        """Ekran koordinatlarını dünya koordinatlarına çevirir"""
+        world_x = (screen_x / self.grid.tile_width + screen_y / self.grid.tile_height)
+        world_y = (screen_y / self.grid.tile_height - screen_x / self.grid.tile_width)
+        return world_x, world_y
+
     def init_shader_system(self, width: int, height: int):
         """Shader sistemini başlat"""
         from .shader_system import ShaderSystem

@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[tool.pylance]
+reportMissingImports = "warning"
+
+[tool.pyright]
+include = ["engine"]
+exclude = ["**/node_modules", "**/__pycache__"]
+pythonVersion = "3.8"
+pythonPlatform = "Windows" 

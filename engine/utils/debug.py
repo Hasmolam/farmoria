@@ -1,165 +1,142 @@
-"""Debug sistemi için temel sınıflar ve fonksiyonlar."""
+"""
+Debug sistemi.
+Performans izleme, hata ayıklama ve geliştirici araçlarını içerir.
+"""
 
-import logging
 import time
-from enum import Enum
-from typing import Dict, Any, Optional
 import pygame
+from typing import Dict, List, Optional, Tuple
+from enum import Enum, auto
+from ..core.base import GameSystem
 
 class DebugLevel(Enum):
-    """Debug seviyelerini tanımlar."""
-    NONE = 0
-    INFO = 1
-    WARNING = 2
-    ERROR = 3
-    DEBUG = 4
+    """Debug seviyeleri"""
+    INFO = auto()
+    WARNING = auto()
+    ERROR = auto()
 
-class DebugCategory(Enum):
-    """Debug kategorilerini tanımlar."""
-    RESOURCE = "resource"
-    ANIMATION = "animation"
-    SHADER = "shader"
-    PHYSICS = "physics"
-    RENDER = "render"
-    AUDIO = "audio"
-    INPUT = "input"
-    NETWORK = "network"
-
-class DebugManager:
-    """Debug yönetim sistemi."""
+class DebugSystem(GameSystem):
+    """Debug sistemi"""
     
     def __init__(self):
+        super().__init__("DebugSystem")
         self.enabled = True
-        self.level = DebugLevel.INFO
-        self.categories = {cat: True for cat in DebugCategory}
-        self.logs = []
-        self.performance_metrics = {}
-        self.frame_times = []
-        self.max_logs = 1000
+        self.show_fps = True
+        self.show_memory = True
+        self.show_physics = True
         
-        # Logging ayarları
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            filename='game_debug.log'
-        )
-        self.logger = logging.getLogger('GameEngine')
-    
-    def log(self, category: DebugCategory, level: DebugLevel, message: str, data: Dict[str, Any] = None):
-        """Debug mesajı kaydet."""
-        if not self.enabled or not self.categories[category] or level.value <= self.level.value:
-            return
-            
-        log_entry = {
-            'timestamp': time.time(),
-            'category': category.value,
-            'level': level.value,
-            'message': message,
-            'data': data or {}
+        # FPS hesaplama için değişkenler
+        self.fps_font = None
+        self.frame_times: List[float] = []
+        self.max_frame_samples = 30
+        self.last_time = time.time()
+        
+        # Debug mesajları
+        self.messages: List[Tuple[str, DebugLevel, float]] = []
+        self.message_lifetime = 5.0
+        
+        # Performans metrikleri
+        self.performance_metrics: Dict[str, float] = {
+            "update_time": 0.0,
+            "render_time": 0.0,
+            "physics_time": 0.0
         }
         
-        self.logs.append(log_entry)
-        if len(self.logs) > self.max_logs:
-            self.logs.pop(0)
+    def initialize(self):
+        """Debug sistemini başlatır"""
+        try:
+            self.fps_font = pygame.font.SysFont("monospace", 16)
+        except:
+            print("Debug font yüklenemedi!")
             
-        # Logging seviyesine göre kaydet
-        if level == DebugLevel.ERROR:
-            self.logger.error(message, extra={'data': data})
-        elif level == DebugLevel.WARNING:
-            self.logger.warning(message, extra={'data': data})
-        elif level == DebugLevel.INFO:
-            self.logger.info(message, extra={'data': data})
-        else:
-            self.logger.debug(message, extra={'data': data})
-    
-    def start_performance_metric(self, name: str):
-        """Performans metriği ölçümü başlat."""
-        self.performance_metrics[name] = {
-            'start_time': time.perf_counter(),
-            'samples': [],
-            'min': float('inf'),
-            'max': float('-inf'),
-            'avg': 0
-        }
-    
-    def end_performance_metric(self, name: str):
-        """Performans metriği ölçümü bitir."""
-        if name not in self.performance_metrics:
-            return
-            
-        duration = time.perf_counter() - self.performance_metrics[name]['start_time']
-        metrics = self.performance_metrics[name]
-        metrics['samples'].append(duration)
-        
-        # İstatistikleri güncelle
-        metrics['min'] = min(metrics['min'], duration)
-        metrics['max'] = max(metrics['max'], duration)
-        metrics['avg'] = sum(metrics['samples']) / len(metrics['samples'])
-    
-    def get_performance_stats(self) -> Dict[str, Dict[str, float]]:
-        """Performans istatistiklerini döndür."""
-        return {
-            name: {
-                'min': metrics['min'],
-                'max': metrics['max'],
-                'avg': metrics['avg'],
-                'samples': len(metrics['samples'])
-            }
-            for name, metrics in self.performance_metrics.items()
-        }
-    
-    def update_frame_time(self, dt: float):
-        """Kare süresini güncelle."""
-        self.frame_times.append(dt)
-        if len(self.frame_times) > 100:
-            self.frame_times.pop(0)
-    
-    def get_fps(self) -> float:
-        """Ortalama FPS değerini döndür."""
-        if not self.frame_times:
-            return 0
-        return 1.0 / (sum(self.frame_times) / len(self.frame_times))
-    
-    def draw_debug_overlay(self, surface: pygame.Surface):
-        """Debug bilgilerini ekrana çiz."""
+    def log(self, message: str, level: DebugLevel = DebugLevel.INFO):
+        """Debug mesajı ekler"""
         if not self.enabled:
             return
             
-        font = pygame.font.Font(None, 24)
-        y = 10
+        self.messages.append((message, level, time.time()))
+        
+        # Eski mesajları temizle
+        current_time = time.time()
+        self.messages = [(msg, lvl, t) for msg, lvl, t in self.messages 
+                        if current_time - t < self.message_lifetime]
+                        
+    def update_fps(self):
+        """FPS bilgisini günceller"""
+        current_time = time.time()
+        dt = current_time - self.last_time
+        self.last_time = current_time
+        
+        self.frame_times.append(dt)
+        if len(self.frame_times) > self.max_frame_samples:
+            self.frame_times.pop(0)
+            
+    def get_fps(self) -> float:
+        """Ortalama FPS değerini döndürür"""
+        if not self.frame_times:
+            return 0.0
+        return len(self.frame_times) / sum(self.frame_times)
+        
+    def start_profile(self, name: str):
+        """Performans profillemesini başlatır"""
+        if not self.enabled:
+            return
+        self.performance_metrics[f"{name}_start"] = time.time()
+        
+    def end_profile(self, name: str):
+        """Performans profillemesini bitirir"""
+        if not self.enabled:
+            return
+        if f"{name}_start" in self.performance_metrics:
+            elapsed = time.time() - self.performance_metrics[f"{name}_start"]
+            self.performance_metrics[name] = elapsed
+            
+    def draw(self, surface: pygame.Surface):
+        """Debug bilgilerini çizer"""
+        if not self.enabled or not self.fps_font:
+            return
+            
+        y_offset = 10
+        x_offset = 10
+        line_height = 20
         
         # FPS göster
-        fps_text = f"FPS: {self.get_fps():.1f}"
-        text_surface = font.render(fps_text, True, (255, 255, 255))
-        surface.blit(text_surface, (10, y))
-        y += 30
-        
-        # Performans metrikleri
-        for name, stats in self.get_performance_stats().items():
-            metric_text = f"{name}: {stats['avg']*1000:.2f}ms"
-            text_surface = font.render(metric_text, True, (255, 255, 255))
-            surface.blit(text_surface, (10, y))
-            y += 20
-        
-        # Son logları göster
-        y += 20
-        for log in self.logs[-5:]:
-            color = (255, 255, 255)
-            if log['level'] == DebugLevel.ERROR.value:
-                color = (255, 0, 0)
-            elif log['level'] == DebugLevel.WARNING.value:
-                color = (255, 255, 0)
+        if self.show_fps:
+            fps_text = f"FPS: {self.get_fps():.1f}"
+            fps_surface = self.fps_font.render(fps_text, True, (255, 255, 255))
+            surface.blit(fps_surface, (x_offset, y_offset))
+            y_offset += line_height
+            
+        # Performans metriklerini göster
+        if self.show_memory:
+            for name, value in self.performance_metrics.items():
+                if not name.endswith("_start"):
+                    metric_text = f"{name}: {value*1000:.1f}ms"
+                    metric_surface = self.fps_font.render(metric_text, True, (255, 255, 255))
+                    surface.blit(metric_surface, (x_offset, y_offset))
+                    y_offset += line_height
+                    
+        # Debug mesajlarını göster
+        current_time = time.time()
+        for msg, level, t in self.messages:
+            if current_time - t < self.message_lifetime:
+                # Seviyeye göre renk belirle
+                color = {
+                    DebugLevel.INFO: (255, 255, 255),
+                    DebugLevel.WARNING: (255, 255, 0),
+                    DebugLevel.ERROR: (255, 0, 0)
+                }[level]
                 
-            log_text = f"{log['category']}: {log['message']}"
-            text_surface = font.render(log_text, True, color)
-            surface.blit(text_surface, (10, y))
-            y += 20
-    
+                msg_surface = self.fps_font.render(msg, True, color)
+                surface.blit(msg_surface, (x_offset, y_offset))
+                y_offset += line_height
+                
     def clear(self):
-        """Debug verilerini temizle."""
-        self.logs.clear()
-        self.performance_metrics.clear()
+        """Debug verilerini temizler"""
+        self.messages.clear()
         self.frame_times.clear()
-
-# Global debug manager instance
-debug_manager = DebugManager() 
+        self.performance_metrics = {
+            "update_time": 0.0,
+            "render_time": 0.0,
+            "physics_time": 0.0
+        } 
