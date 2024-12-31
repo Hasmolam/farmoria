@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import math
 import json
+from .debug import debug_manager, DebugCategory, DebugLevel
 
 @dataclass
 class Bone:
@@ -97,6 +98,13 @@ class Animation:
         self.current_time = 0.0
         self.is_playing = False
         self.is_looping = True
+        
+        debug_manager.log(
+            DebugCategory.ANIMATION,
+            DebugLevel.INFO,
+            f"Yeni animasyon oluşturuldu: {name}",
+            {"duration": duration}
+        )
     
     def add_keyframe(self, time: float, bone_poses: Dict[str, Tuple[float, float, float]]):
         """Yeni bir animasyon karesi ekle"""
@@ -154,17 +162,31 @@ class Animation:
     
     def update(self, dt: float):
         """Animasyonu güncelle"""
-        if not self.is_playing:
-            return
-        
-        self.current_time += dt
-        
-        if self.current_time >= self.duration:
-            if self.is_looping:
-                self.current_time %= self.duration
-            else:
-                self.current_time = self.duration
-                self.is_playing = False
+        debug_manager.start_performance_metric(f"animation_update_{self.name}")
+        try:
+            if not self.is_playing:
+                return
+            
+            self.current_time += dt
+            
+            if self.current_time >= self.duration:
+                if self.is_looping:
+                    self.current_time %= self.duration
+                    debug_manager.log(
+                        DebugCategory.ANIMATION,
+                        DebugLevel.DEBUG,
+                        f"Animasyon döngüye girdi: {self.name}"
+                    )
+                else:
+                    self.current_time = self.duration
+                    self.is_playing = False
+                    debug_manager.log(
+                        DebugCategory.ANIMATION,
+                        DebugLevel.INFO,
+                        f"Animasyon tamamlandı: {self.name}"
+                    )
+        finally:
+            debug_manager.end_performance_metric(f"animation_update_{self.name}")
     
     def play(self, loop: bool = True):
         """Animasyonu başlat"""
@@ -180,6 +202,17 @@ class Animation:
     def pause(self):
         """Animasyonu duraklat"""
         self.is_playing = False
+    
+    def get_debug_info(self) -> dict:
+        """Debug bilgilerini döndür."""
+        return {
+            "name": self.name,
+            "duration": self.duration,
+            "current_time": self.current_time,
+            "is_playing": self.is_playing,
+            "is_looping": self.is_looping,
+            "keyframe_count": len(self.keyframes)
+        }
 
 class Skeleton:
     """İskelet sistemi"""
@@ -190,6 +223,12 @@ class Skeleton:
         self.current_animation: Optional[Animation] = None
         self.sprite_sheet: Optional[pygame.Surface] = None
         self.sprite_regions: Dict[str, pygame.Rect] = {}
+        
+        debug_manager.log(
+            DebugCategory.ANIMATION,
+            DebugLevel.INFO,
+            "Yeni iskelet oluşturuldu"
+        )
     
     def add_bone(self, name: str, length: float, parent_name: Optional[str] = None,
                 angle: float = 0.0, position: Tuple[float, float] = (0.0, 0.0)):
@@ -213,25 +252,51 @@ class Skeleton:
     
     def update(self, dt: float):
         """İskeleti güncelle"""
-        if self.current_animation and self.current_animation.is_playing:
-            self.current_animation.update(dt)
-            
-            # Güncel pozu uygula
-            current_pose = self.current_animation.get_pose_at_time(
-                self.current_animation.current_time
+        debug_manager.start_performance_metric("skeleton_update")
+        try:
+            if self.current_animation and self.current_animation.is_playing:
+                self.current_animation.update(dt)
+                
+                # Güncel pozu uygula
+                current_pose = self.current_animation.get_pose_at_time(
+                    self.current_animation.current_time
+                )
+                
+                for bone_name, (pos_x, pos_y, angle) in current_pose.items():
+                    if bone_name in self.bones:
+                        bone = self.bones[bone_name]
+                        bone.position = (pos_x, pos_y)
+                        bone.angle = angle
+                
+                debug_manager.log(
+                    DebugCategory.ANIMATION,
+                    DebugLevel.DEBUG,
+                    f"İskelet güncellendi: {self.current_animation.name}",
+                    {"time": self.current_animation.current_time}
+                )
+        except Exception as e:
+            debug_manager.log(
+                DebugCategory.ANIMATION,
+                DebugLevel.ERROR,
+                "İskelet güncelleme hatası",
+                {"error": str(e)}
             )
-            
-            for bone_name, (pos_x, pos_y, angle) in current_pose.items():
-                if bone_name in self.bones:
-                    bone = self.bones[bone_name]
-                    bone.position = (pos_x, pos_y)
-                    bone.angle = angle
+            raise
+        finally:
+            debug_manager.end_performance_metric("skeleton_update")
     
     def draw(self, surface: pygame.Surface, position: Tuple[float, float], 
              debug: bool = False, color: Tuple[int, int, int] = (255, 0, 0)):
         """İskeleti çiz"""
-        for bone in self.root_bones:
-            self._draw_bone_recursive(surface, bone, position, debug, color)
+        debug_manager.start_performance_metric("skeleton_draw")
+        try:
+            for bone in self.root_bones:
+                self._draw_bone_recursive(surface, bone, position, debug, color)
+                
+            if debug:
+                self.draw_debug_info(surface)
+        finally:
+            debug_manager.end_performance_metric("skeleton_draw")
     
     def _draw_bone_recursive(self, surface: pygame.Surface, bone: Bone,
                            offset: Tuple[float, float], debug: bool,
@@ -278,6 +343,32 @@ class Skeleton:
         # Alt kemikleri çiz
         for child in bone.children:
             self._draw_bone_recursive(surface, child, offset, debug, color)
+    
+    def draw_debug_info(self, surface: pygame.Surface):
+        """Debug bilgilerini çiz."""
+        if not debug_manager.enabled:
+            return
+            
+        font = pygame.font.Font(None, 20)
+        y = 10
+        
+        # Animasyon bilgileri
+        if self.current_animation:
+            anim_text = f"Animasyon: {self.current_animation.name}"
+            text_surface = font.render(anim_text, True, (0, 255, 0))
+            surface.blit(text_surface, (10, y))
+            y += 20
+            
+            time_text = f"Zaman: {self.current_animation.current_time:.2f}s"
+            text_surface = font.render(time_text, True, (0, 255, 0))
+            surface.blit(text_surface, (10, y))
+            y += 20
+        
+        # Kemik bilgileri
+        bone_count = len(self.bones)
+        bones_text = f"Kemik sayısı: {bone_count}"
+        text_surface = font.render(bones_text, True, (0, 255, 0))
+        surface.blit(text_surface, (10, y))
     
     def save_to_file(self, filename: str):
         """İskelet ve animasyonları dosyaya kaydet"""

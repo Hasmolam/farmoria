@@ -1,6 +1,45 @@
 # Farmoria Game Engine
 
-Farmoria, Python tabanlı modern bir 2D oyun motorudur. ModernGL kullanarak güçlü grafik özellikleri sunar ve gelişmiş animasyon sistemleri içerir.
+Modern ve modüler 2D oyun motoru.
+
+## Modül Yapısı
+
+Engine modülü beş ana alt modülden oluşur:
+
+### Core
+Temel motor bileşenleri:
+- `base.py`: Temel sınıflar ve arayüzler
+- `core.py`: Çekirdek motor fonksiyonları
+- `game_state.py`: Oyun durumu yönetimi
+
+### Graphics
+Grafik ve render sistemleri:
+- `renderer.py`: Ana render sistemi
+- `shader_system.py`: Shader yönetimi
+- `texture_atlas.py`: Doku atlası işlemleri
+- `shaders/`: Shader dosyaları
+
+### Systems
+Oyun sistemleri:
+- `animation.py`: Animasyon sistemi
+- `audio.py`: Ses sistemi
+- `physics.py`: Fizik motoru
+- `input.py`: Girdi yönetimi
+
+### Components
+Oyun bileşenleri:
+- `player.py`: Oyuncu yönetimi
+- `scene.py`: Sahne sistemi
+- `ui.py`: Kullanıcı arayüzü bileşenleri
+
+### Utils
+Yardımcı araçlar:
+- `debug.py`: Hata ayıklama araçları
+- `resource_manager.py`: Kaynak yönetimi
+- `timing.py`: Zamanlama işlemleri
+- `data_manager.py`: Veri yönetimi
+- `sprite_generator.py`: Sprite oluşturma araçları
+- `isometric.py`: İzometrik görünüm araçları
 
 ## Özellikler
 

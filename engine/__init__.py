@@ -1,14 +1,22 @@
-# Engine modülü başlatma dosyası
-from .scene import Scene, SceneManager, SceneState
-from .physics import PhysicsWorld, CollisionType
-from .ui import Button, Label, Panel, Alignment 
-from .resource_manager import ResourceManager, AssetType
-from .debug import debug_system, LogLevel
+"""
+Farmoria Game Engine
+===================
 
-# Singleton instances
-resource_manager = ResourceManager()
+Modüler yapıda tasarlanmış 2D oyun motoru.
 
-__all__ = [
-    'resource_manager', 'ResourceManager', 'AssetType',
-    'debug_system', 'LogLevel'
-] 
+Modüller:
+---------
+- core: Temel motor işlevleri
+- graphics: Grafik işlemleri ve render sistemi
+- systems: Oyun sistemleri (fizik, ses, girdi vb.)
+- utils: Yardımcı araçlar ve yöneticiler
+- components: Oyun nesneleri ve bileşenleri
+"""
+
+__version__ = "0.1.0"
+
+from . import core
+from . import graphics
+from . import systems
+from . import utils
+from . import components 
